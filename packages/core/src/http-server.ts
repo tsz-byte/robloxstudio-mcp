@@ -153,6 +153,16 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     dryRun: body.dryRun,
     maxReplacements: body.maxReplacements,
   }, body.instance_id),
+
+  // === Gameplay Intelligence (Phase 0) ===
+  teleport_player: (tools, body) => tools.teleportPlayer(body.position, body.player_name, body.instance_id),
+  get_player_state: (tools, body) => tools.getPlayerState(body.player_name, body.nearby_radius, body.instance_id),
+  get_nearby_parts: (tools, body) => tools.getNearbyParts(body.center, body.radius, body.filter, body.filter_value, body.max_results, body.instance_id),
+  activate_prompt: (tools, body) => tools.activatePrompt(body.target, body.max_distance, body.player_name, body.instance_id),
+  gui_snapshot: (tools, body) => tools.guiSnapshot(body.player_name, body.max_depth, body.target, body.instance_id),
+  compound_eval: (tools, body) => tools.compoundEval(body.steps, body.instance_id),
+  raycast_from_camera: (tools, body) => tools.raycastFromCamera(body.max_distance, body.target, body.instance_id),
+  read_npc_state: (tools, body) => tools.readNpcState(body.target_npc, body.player_name, body.instance_id),
 };
 
 export function createHttpServer(tools: RobloxStudioTools, bridge: BridgeService, allowedTools?: Set<string>, serverConfig?: StreamableHttpConfig) {

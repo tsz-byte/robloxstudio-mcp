@@ -2766,6 +2766,145 @@ export const DEPRECATED_TOOL_DEFINITIONS: ToolDefinition[] = [
       }
     }
   },
+
+  // === Gameplay Intelligence (Phase 0) ===
+  {
+    name: 'teleport_player',
+    category: 'write',
+    description: 'Teleport a player character to a world position. Requires a running playtest.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        position: {
+          type: 'array',
+          items: { type: 'number' },
+          minItems: 3,
+          maxItems: 3,
+          description: 'Target position [X, Y, Z] in world studs'
+        },
+        player_name: {
+          type: 'string',
+          description: 'Player name to teleport. Defaults to first player.'
+        },
+        instance_id: {
+          type: 'string',
+          description: 'Which connected Studio place to target.'
+        }
+      },
+      required: ['position']
+    }
+  },
+  {
+    name: 'get_player_state',
+    category: 'read',
+    description: 'Get comprehensive player state: position, health, camera, equipped tool. Requires a running playtest.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        player_name: { type: 'string', description: 'Player name. Defaults to first player.' },
+        nearby_radius: { type: 'number', description: 'Include parts within this radius. Default: 50.' },
+        instance_id: { type: 'string', description: 'Which connected Studio place to target.' }
+      }
+    }
+  },
+  {
+    name: 'get_nearby_parts',
+    category: 'read',
+    description: 'Spatial query: find parts within a radius of a position or player. Supports filters. Requires a running playtest.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        center: { description: '"player" or [X, Y, Z] position.' },
+        radius: { type: 'number', description: 'Search radius in studs. Default: 50.' },
+        filter: { type: 'string', enum: ['all', 'has_prompt', 'has_humanoid', 'has_tag', 'named'], description: 'Filter type.' },
+        filter_value: { type: 'string', description: 'Value for filter.' },
+        max_results: { type: 'number', description: 'Max results. Default: 50.' },
+        instance_id: { type: 'string', description: 'Which connected Studio place to target.' }
+      },
+      required: ['center']
+    }
+  },
+  {
+    name: 'activate_prompt',
+    category: 'write',
+    description: 'Find and fire a ProximityPrompt on the nearest interactable object. Requires a running playtest.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: '"nearest" or DataModel path to a ProximityPrompt parent.' },
+        max_distance: { type: 'number', description: 'Max search distance. Default: 20.' },
+        player_name: { type: 'string', description: 'Player for "nearest" search. Defaults to first player.' },
+        instance_id: { type: 'string', description: 'Which connected Studio place to target.' }
+      },
+      required: ['target']
+    }
+  },
+  {
+    name: 'gui_snapshot',
+    category: 'read',
+    description: 'Read full PlayerGui tree with visible state, text, position, size. Requires a running playtest.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        player_name: { type: 'string', description: 'Player name. Defaults to first player.' },
+        max_depth: { type: 'number', description: 'Max tree depth. Default: 5.' },
+        target: { type: 'string', description: 'Client target. Default: "client-1".' },
+        instance_id: { type: 'string', description: 'Which connected Studio place to target.' }
+      }
+    }
+  },
+  {
+    name: 'compound_eval',
+    category: 'write',
+    description: 'Execute multiple Luau steps sequentially. Each step can reference previous results via result_N. Requires a running playtest.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              code: { type: 'string', description: 'Luau code to execute' },
+              target: { type: 'string', description: '"server", "client-N", or "edit". Default: "server".' },
+              wait_after: { type: 'number', description: 'Seconds to wait after step. Default: 0.' }
+            },
+            required: ['code']
+          },
+          description: 'Ordered list of Luau steps.'
+        },
+        instance_id: { type: 'string', description: 'Which connected Studio place to target.' }
+      },
+      required: ['steps']
+    }
+  },
+  {
+    name: 'raycast_from_camera',
+    category: 'read',
+    description: 'Cast a ray from the player camera forward and report what it hits. Requires a running playtest.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        max_distance: { type: 'number', description: 'Max ray distance. Default: 500.' },
+        target: { type: 'string', description: 'Client target. Default: "client-1".' },
+        instance_id: { type: 'string', description: 'Which connected Studio place to target.' }
+      }
+    }
+  },
+  {
+    name: 'read_npc_state',
+    category: 'read',
+    description: 'Read NPC/enemy state: position, health, behavior, target, distance to player. Requires a running playtest.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target_npc: { type: 'string', description: 'NPC name, EnemyTag value, or "nearest".' },
+        player_name: { type: 'string', description: 'Player for distance. Defaults to first player.' },
+        instance_id: { type: 'string', description: 'Which connected Studio place to target.' }
+      },
+      required: ['target_npc']
+    }
+  },
 ];
 
 export const getReadOnlyTools = () => TOOL_DEFINITIONS.filter(t => t.category === 'read');

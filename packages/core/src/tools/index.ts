@@ -5021,4 +5021,317 @@ export class RobloxStudioTools {
       ],
     };
   }
+
+  // ═══════════════════════════════════════════════
+  // Phase 0: Gameplay Intelligence Tools
+  // ═══════════════════════════════════════════════
+
+  async teleportPlayer(position: [number, number, number], playerName?: string, instanceId?: string) {
+    const [x, y, z] = position;
+    const findPlayer = playerName
+      ? `local player = game.Players:FindFirstChild(${JSON.stringify(playerName)}) or error("Player not found: ${playerName}")`
+      : `local player = game.Players:GetPlayers()[1] or error("No players in game")`;
+    const code = `
+      ${findPlayer}
+      local char = player.Character or error("No character")
+      local hrp = char:FindFirstChild("HumanoidRootPart") or error("No HumanoidRootPart")
+      hrp.CFrame = CFrame.new(${x}, ${y}, ${z})
+      return {success = true, position = {${x}, ${y}, ${z}}, player = player.Name}
+    `;
+    const response = await this._callSingle('/api/eval-runtime', { code }, 'server', instanceId);
+    return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
+  }
+
+  async getPlayerState(playerName?: string, nearbyRadius?: number, instanceId?: string) {
+    const findPlayer = playerName
+      ? `local player = game.Players:FindFirstChild(${JSON.stringify(playerName)}) or error("Player not found")`
+      : `local player = game.Players:GetPlayers()[1] or error("No players")`;
+    const radius = nearbyRadius ?? 50;
+    const code = `
+      ${findPlayer}
+      local char = player.Character
+      if not char then return {error = "No character"} end
+      local hrp = char:FindFirstChild("HumanoidRootPart")
+      local hum = char:FindFirstChild("Humanoid")
+      local cam = workspace.CurrentCamera
+      local nearby = {}
+      if hrp then
+        for _, part in workspace:GetPartBoundsInBox(hrp.CFrame, Vector3.new(${radius * 2}, ${radius * 2}, ${radius * 2})) do
+          local d = (part.Position - hrp.Position).Magnitude
+          if d <= ${radius} and #nearby < 20 then
+            table.insert(nearby, {name = part.Name, class = part.ClassName, dist = math.floor(d * 10) / 10,
+              hasPrompt = part:FindFirstChildOfClass("ProximityPrompt") ~= nil})
+          end
+        end
+        table.sort(nearby, function(a, b) return a.dist < b.dist end)
+      end
+      return {
+        player = player.Name,
+        position = hrp and {hrp.Position.X, hrp.Position.Y, hrp.Position.Z} or nil,
+        health = hum and hum.Health or nil,
+        maxHealth = hum and hum.MaxHealth or nil,
+        walkSpeed = hum and hum.WalkSpeed or nil,
+        cameraPosition = cam and {cam.CFrame.Position.X, cam.CFrame.Position.Y, cam.CFrame.Position.Z} or nil,
+        cameraLook = cam and {cam.CFrame.LookVector.X, cam.CFrame.LookVector.Y, cam.CFrame.LookVector.Z} or nil,
+        nearby = nearby
+      }
+    `;
+    const response = await this._callSingle('/api/eval-runtime', { code }, 'server', instanceId);
+    return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
+  }
+
+  async getNearbyParts(center: string | [number, number, number], radius?: number, filter?: string, filterValue?: string, maxResults?: number, instanceId?: string) {
+    const r = radius ?? 50;
+    const max = maxResults ?? 50;
+    const centerCode = center === 'player'
+      ? `local hrp = game.Players:GetPlayers()[1].Character:FindFirstChild("HumanoidRootPart") or error("No player"); local centerPos = hrp.Position`
+      : `local centerPos = Vector3.new(${(center as number[])[0]}, ${(center as number[])[1]}, ${(center as number[])[2]})`;
+
+    let filterCode = '';
+    if (filter === 'has_prompt') {
+      filterCode = `if not part:FindFirstChildOfClass("ProximityPrompt") then continue end`;
+    } else if (filter === 'has_humanoid') {
+      filterCode = `if not (part.Parent and part.Parent:FindFirstChildOfClass("Humanoid")) then continue end`;
+    } else if (filter === 'has_tag') {
+      filterCode = `if not part:HasTag(${JSON.stringify(filterValue || '')}) then continue end`;
+    } else if (filter === 'named') {
+      filterCode = `if not part.Name:match(${JSON.stringify(filterValue || '')}) then continue end`;
+    }
+
+    const code = `
+      ${centerCode}
+      local results = {}
+      for _, part in workspace:GetPartBoundsInBox(CFrame.new(centerPos), Vector3.new(${r * 2}, ${r * 2}, ${r * 2})) do
+        local d = (part.Position - centerPos).Magnitude
+        if d > ${r} then continue end
+        ${filterCode}
+        if #results >= ${max} then break end
+        table.insert(results, {name = part.Name, class = part.ClassName, dist = math.floor(d * 10) / 10,
+          position = {part.Position.X, part.Position.Y, part.Position.Z},
+          hasPrompt = part:FindFirstChildOfClass("ProximityPrompt") ~= nil,
+          hasHumanoid = part.Parent and part.Parent:FindFirstChildOfClass("Humanoid") ~= nil})
+      end
+      table.sort(results, function(a, b) return a.dist < b.dist end)
+      return results
+    `;
+    const response = await this._callSingle('/api/eval-runtime', { code }, 'server', instanceId);
+    return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
+  }
+
+  async activatePrompt(target: string, maxDistance?: number, playerName?: string, instanceId?: string) {
+    const dist = maxDistance ?? 20;
+    const findPlayer = playerName
+      ? `local player = game.Players:FindFirstChild(${JSON.stringify(playerName)}) or error("Player not found")`
+      : `local player = game.Players:GetPlayers()[1] or error("No players")`;
+
+    let findPromptCode: string;
+    if (target === 'nearest') {
+      findPromptCode = `
+        ${findPlayer}
+        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart") or error("No HRP")
+        local nearest, nearDist = nil, ${dist}
+        for _, obj in workspace:GetDescendants() do
+          if obj:IsA("ProximityPrompt") then
+            local parent = obj.Parent
+            if parent and parent:IsA("BasePart") then
+              local d = (parent.Position - hrp.Position).Magnitude
+              if d < nearDist then nearDist = d; nearest = obj end
+            end
+          end
+        end
+        if not nearest then return {error = "No ProximityPrompt found within ${dist} studs"} end
+      `;
+    } else {
+      findPromptCode = `
+        local target = game
+        for _, name in string.split(${JSON.stringify(target)}, ".") do
+          if name == "game" then continue end
+          target = target:FindFirstChild(name)
+          if not target then return {error = "Path not found: ${target}"} end
+        end
+        local nearest = target:IsA("ProximityPrompt") and target or target:FindFirstChildOfClass("ProximityPrompt")
+        if not nearest then return {error = "No ProximityPrompt found at path"} end
+      `;
+    }
+
+    const code = `
+      ${findPromptCode}
+      local parent = nearest.Parent
+      local oldMax = nearest.MaxActivationDistance
+      nearest.MaxActivationDistance = 1000
+      nearest:InputHoldBegin()
+      task.wait(nearest.HoldDuration + 0.1)
+      nearest:InputHoldEnd()
+      nearest.MaxActivationDistance = oldMax
+      return {
+        success = true,
+        promptName = nearest.Name,
+        objectText = nearest.ObjectText or "",
+        actionText = nearest.ActionText or "",
+        parentName = parent and parent.Name or "unknown",
+        holdDuration = nearest.HoldDuration
+      }
+    `;
+    const response = await this._callSingle('/api/eval-runtime', { code }, 'server', instanceId);
+    return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
+  }
+
+  async guiSnapshot(playerName?: string, maxDepth?: number, target?: string, instanceId?: string) {
+    const findPlayer = playerName
+      ? `local player = game.Players:FindFirstChild(${JSON.stringify(playerName)}) or error("Player not found")`
+      : `local player = game.Players.LocalPlayer or game.Players:GetPlayers()[1]`;
+    const depth = maxDepth ?? 5;
+    const code = `
+      ${findPlayer}
+      local pg = player:FindFirstChild("PlayerGui")
+      if not pg then return {error = "No PlayerGui"} end
+      local function scan(inst, d)
+        if d > ${depth} then return nil end
+        local r = {name = inst.Name, class = inst.ClassName}
+        if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
+          r.text = inst.Text; r.visible = inst.Visible
+          r.textTransparency = inst.TextTransparency
+        end
+        if inst:IsA("Frame") or inst:IsA("ImageLabel") or inst:IsA("ScrollingFrame") then
+          r.visible = inst.Visible; r.bgTransparency = inst.BackgroundTransparency
+        end
+        if inst:IsA("GuiObject") then
+          r.size = tostring(inst.Size); r.position = tostring(inst.Position)
+        end
+        local children = {}
+        for _, child in inst:GetChildren() do
+          local cr = scan(child, d + 1)
+          if cr then table.insert(children, cr) end
+        end
+        if #children > 0 then r.children = children end
+        return r
+      end
+      local trees = {}
+      for _, gui in pg:GetChildren() do
+        table.insert(trees, scan(gui, 0))
+      end
+      return trees
+    `;
+    const clientTarget = target || 'client-1';
+    const response = await this._callSingle('/api/eval-runtime', { code }, clientTarget, instanceId);
+    return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
+  }
+
+  async compoundEval(steps: Array<{ code: string; target?: string; wait_after?: number }>, instanceId?: string) {
+    const results: Array<{ step: number; success: boolean; result?: unknown; error?: string }> = [];
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const target = step.target || 'server';
+      const endpoint = target === 'edit' ? '/api/execute-luau' : '/api/eval-runtime';
+      try {
+        const response = await this._callSingle(endpoint, { code: step.code }, target, instanceId);
+        const parsed = response as { ok?: boolean; returnValue?: unknown; error?: string };
+        results.push({
+          step: i + 1,
+          success: parsed?.ok !== false,
+          result: parsed?.returnValue,
+          error: parsed?.error,
+        });
+      } catch (err) {
+        results.push({
+          step: i + 1,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      if (step.wait_after && step.wait_after > 0) {
+        await new Promise(resolve => setTimeout(resolve, step.wait_after! * 1000));
+      }
+    }
+    return { content: [{ type: 'text' as const, text: JSON.stringify(results) }] };
+  }
+
+  async raycastFromCamera(maxDistance?: number, target?: string, instanceId?: string) {
+    const dist = maxDistance ?? 500;
+    const code = `
+      local cam = workspace.CurrentCamera
+      if not cam then return {error = "No camera"} end
+      local origin = cam.CFrame.Position
+      local direction = cam.CFrame.LookVector * ${dist}
+      local params = RaycastParams.new()
+      params.FilterType = Enum.RaycastFilterType.Exclude
+      local result = workspace:Raycast(origin, direction, params)
+      if result then
+        return {
+          hit = true,
+          partName = result.Instance.Name,
+          partClass = result.Instance.ClassName,
+          hitPosition = {result.Position.X, result.Position.Y, result.Position.Z},
+          hitNormal = {result.Normal.X, result.Normal.Y, result.Normal.Z},
+          distance = math.floor(result.Distance * 10) / 10,
+          material = tostring(result.Material)
+        }
+      end
+      return {hit = false, distance = ${dist}}
+    `;
+    const clientTarget = target || 'client-1';
+    const response = await this._callSingle('/api/eval-runtime', { code }, clientTarget, instanceId);
+    return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
+  }
+
+  async readNpcState(targetNpc: string, playerName?: string, instanceId?: string) {
+    const findPlayer = playerName
+      ? `local player = game.Players:FindFirstChild(${JSON.stringify(playerName)}) or error("Player not found")`
+      : `local player = game.Players:GetPlayers()[1] or error("No players")`;
+
+    let findNpcCode: string;
+    if (targetNpc === 'nearest') {
+      findNpcCode = `
+        ${findPlayer}
+        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart") or error("No player HRP")
+        local nearest, nearDist = nil, math.huge
+        for _, obj in workspace:GetDescendants() do
+          if obj:IsA("Model") and obj:FindFirstChild("EnemyTag") and obj:FindFirstChild("Humanoid") then
+            local root = obj:FindFirstChild("HumanoidRootPart")
+            if root then
+              local d = (hrp.Position - root.Position).Magnitude
+              if d < nearDist then nearDist = d; nearest = obj end
+            end
+          end
+        end
+        if not nearest then return {error = "No NPC/enemy found"} end
+        local npc = nearest
+      `;
+    } else {
+      findNpcCode = `
+        ${findPlayer}
+        local npc = nil
+        for _, obj in workspace:GetDescendants() do
+          if obj:IsA("Model") then
+            local tag = obj:FindFirstChild("EnemyTag")
+            if (tag and tag.Value == ${JSON.stringify(targetNpc)}) or obj.Name == ${JSON.stringify(targetNpc)} then
+              npc = obj; break
+            end
+          end
+        end
+        if not npc then return {error = "NPC not found: ${targetNpc}"} end
+      `;
+    }
+
+    const code = `
+      ${findNpcCode}
+      local hum = npc:FindFirstChild("Humanoid")
+      local root = npc:FindFirstChild("HumanoidRootPart")
+      local tag = npc:FindFirstChild("EnemyTag")
+      local playerPos = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+      local dist = (root and playerPos) and math.floor((root.Position - playerPos.Position).Magnitude * 10) / 10 or nil
+      return {
+        name = npc.Name,
+        tag = tag and tag.Value or nil,
+        position = root and {root.Position.X, root.Position.Y, root.Position.Z} or nil,
+        health = hum and hum.Health or nil,
+        maxHealth = hum and hum.MaxHealth or nil,
+        walkSpeed = hum and hum.WalkSpeed or nil,
+        distanceToPlayer = dist,
+        alive = hum and hum.Health > 0 or false
+      }
+    `;
+    const response = await this._callSingle('/api/eval-runtime', { code }, 'server', instanceId);
+    return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
+  }
 }
